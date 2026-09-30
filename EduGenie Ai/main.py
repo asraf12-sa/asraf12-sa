@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
@@ -43,6 +43,36 @@ async def handle_unexpected_error(
         request.url.path,
         exc_info=exc,
     )
+
+    status_code = getattr(exc, "status_code", None)
+    if status_code is None:
+        status_code = getattr(exc, "code", None)
+
+    error_message = str(exc).lower()
+    retryable = status_code in {429, 500, 503} or any(
+        marker in error_message
+        for marker in (
+            "temporarily unavailable",
+            "unavailable",
+            "rate limit",
+            "overloaded",
+            "quota",
+            "high demand",
+            "too many requests",
+        )
+    )
+
+    if retryable:
+        return JSONResponse(
+            status_code=503,
+            headers={"Retry-After": "30"},
+            content={
+                "detail": (
+                    "Gemini is temporarily unavailable. Please try again shortly."
+                )
+            },
+        )
+
     return JSONResponse(
         status_code=500,
         content={
@@ -65,6 +95,14 @@ async def home(request: Request):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return FileResponse(
+        BASE_DIR / "static" / "css" / "favicon.svg",
+        media_type="image/svg+xml",
+    )
 
 
 @app.post("/qa")
